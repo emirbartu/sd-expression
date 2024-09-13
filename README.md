@@ -23,8 +23,8 @@ The AI Consistent Character Generation Pipeline is designed to take a 2D charact
 
 1. Clone the repository:
    ```
-   git clone https://github.com/emirbartu/sd-duygu.git
-   cd sd-duygu
+   git clone https://github.com/emirbartu/sd-expression.git
+   cd sd-expression
    ```
 
 2. Install the required dependencies:

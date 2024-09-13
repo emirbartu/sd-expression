@@ -8,12 +8,34 @@ import logging
 import os
 import sys
 import time
+import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Output folder for generated expressions
+OUTPUT_FOLDER = "generated_expressions"
+
+# Configuration
+CONFIG = {
+    "HF_MODEL": "stabilityai/stable-diffusion-xl-base-1.0",
+    "VAE_MODEL": "stabilityai/sdxl-vae",
+    "LORA_MODEL": "pytorch_lora_weights_SD.safetensors",
+    "STEPS": 30,
+    "GUIDANCE_SCALE": 7.5,
+    "STRENGTH": 0.7,
+    "SAMPLER": "lcm",
+    "SCHEDULER": "normal",
+    "LORA_STRENGTH": 1.0,
+    "DENOISE": 0.75,
+    "SEED": 152,
+    "CLIP_SKIP": 1,
+    "VAE_TILING": False,
+    "NOISE_MASK_FEATHER": 0,
+}
+
 # Hugging Face API constants
-HF_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+HF_API_URL = f"https://api-inference.huggingface.co/models/{CONFIG['HF_MODEL']}"
 HF_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN")
 
 if not HF_API_TOKEN:
@@ -30,7 +52,8 @@ def load_image(image_path):
         with Image.open(image_path) as img:
             # Verify that the image can be opened
             img.verify()
-        return image_path
+        # Open the image again and return it as a PIL Image object
+        return Image.open(image_path)
     except (IOError, OSError, Image.DecompressionBombError) as e:
         logging.error(f"Error loading image {image_path}: {str(e)}")
         return None
@@ -38,16 +61,30 @@ def load_image(image_path):
 # The get_available_models function is removed as it's not needed for the Hugging Face API.
 # We're using a specific model (Stable Diffusion XL) directly in this script.
 
-def generate_expression(expression, max_retries=3, timeout=60):
-    if not HF_API_TOKEN:
-        logging.error("Hugging Face API token is not set. Please set the HUGGINGFACE_API_TOKEN environment variable.")
-        return None
-
+def generate_expression(expression, input_image, max_retries=3, timeout=60):
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
+    # Prepare the payload
     payload = {
         "inputs": f"portrait of a 2D character, {expression} expression, consistent features, detailed, high quality",
+        "negative_prompt": "low quality, blurry, distorted features, inconsistent style",
+        "num_inference_steps": CONFIG["STEPS"],
+        "guidance_scale": CONFIG["GUIDANCE_SCALE"],
+        "sampler": CONFIG["SAMPLER"],
+        "scheduler": CONFIG["SCHEDULER"],
+        "strength": CONFIG["STRENGTH"],
+        "lora_scale": CONFIG["LORA_STRENGTH"],
+        "vae": CONFIG["VAE_MODEL"],
+        "lora": CONFIG["LORA_MODEL"],
+        "seed": CONFIG["SEED"],
+        "denoise": CONFIG["DENOISE"],
     }
+
+    # Add the input image to the payload for img2img
+    buffered = BytesIO()
+    input_image.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    payload["image"] = img_str
 
     for attempt in range(max_retries):
         try:
@@ -76,26 +113,66 @@ def generate_expression(expression, max_retries=3, timeout=60):
     return None
 
 def remove_background(image):
-    # Placeholder for background removal
-    # In a real implementation, you would use a more sophisticated method
-    # For now, we'll just return the original image
-    return image
+    # Color-based segmentation for background removal
+    from PIL import Image
+    import numpy as np
+    from sklearn.cluster import KMeans
 
-def main(max_retries=3):
+    # Convert image to numpy array
+    img_array = np.array(image)
+
+    # Reshape the image to be a list of pixels
+    pixels = img_array.reshape((-1, 3))
+
+    # Perform K-means clustering
+    kmeans = KMeans(n_clusters=2, random_state=42)
+    kmeans.fit(pixels)
+
+    # Create a mask based on the cluster labels
+    mask = kmeans.labels_.reshape(img_array.shape[:2])
+
+    # Determine which cluster represents the background
+    # Assume the cluster with more pixels is the background
+    background_label = 0 if np.sum(mask == 0) > np.sum(mask == 1) else 1
+
+    # Create an alpha channel
+    alpha = np.where(mask == background_label, 0, 255).astype(np.uint8)
+
+    # Add alpha channel to the image
+    result = np.dstack((img_array, alpha))
+
+    # Convert back to PIL Image
+    return Image.fromarray(result, 'RGBA')
+
+def main(input_image_path, max_retries=3):
     expressions = ["smiling", "laughing", "surprised", "sad", "mad", "afraid"]
     generated_images = []
+
+    # Create the output folder if it doesn't exist
+    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+    # Load the input image
+    input_image = load_image(input_image_path)
+    if input_image is None:
+        logging.error(f"Failed to load input image: {input_image_path}")
+        return []
+
+    # LoRA and VAE models are handled by the Hugging Face API
+    # No need to load them locally
 
     for expression in expressions:
         success = False
         for attempt in range(max_retries):
             try:
                 logging.info(f"Generating {expression} expression (attempt {attempt + 1}/{max_retries})...")
-                generated_image = generate_expression(expression)
+                generated_image = generate_expression(expression, input_image)
                 if generated_image:
-                    output_filename = f"{expression}_output.png"
-                    generated_image.save(output_filename)
+                    # Apply background removal
+                    processed_image = remove_background(generated_image)
+                    output_filename = os.path.join(OUTPUT_FOLDER, f"{expression}_output.png")
+                    processed_image.save(output_filename)
                     generated_images.append(output_filename)
-                    logging.info(f"Generated {expression} expression: {output_filename}")
+                    logging.info(f"Generated and processed {expression} expression: {output_filename}")
                     success = True
                     break
                 else:
@@ -109,15 +186,16 @@ def main(max_retries=3):
     total_expressions = len(expressions)
     generated_count = len(generated_images)
     if generated_count == total_expressions:
-        logging.info(f"All {total_expressions} expressions generated successfully.")
+        logging.info(f"All {total_expressions} expressions generated and processed successfully.")
     else:
-        logging.warning(f"Generated {generated_count} out of {total_expressions} expressions.")
+        logging.warning(f"Generated and processed {generated_count} out of {total_expressions} expressions.")
 
     return generated_images
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate consistent character expressions")
+    parser.add_argument("input_image", help="Path to the input image")
     parser.add_argument("--max_retries", type=int, default=3, help="Maximum number of retries for API calls")
     args = parser.parse_args()
 
-    main(max_retries=args.max_retries)
+    main(args.input_image, max_retries=args.max_retries)

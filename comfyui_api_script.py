@@ -3,12 +3,14 @@ import base64
 from io import BytesIO
 from PIL import Image
 import requests
-import json
 import logging
 import os
 import sys
 import time
 import numpy as np
+from diffusers import StableDiffusionImg2ImgPipeline
+import torch
+from sklearn.cluster import KMeans
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -32,6 +34,8 @@ CONFIG = {
     "CLIP_SKIP": 1,
     "VAE_TILING": False,
     "NOISE_MASK_FEATHER": 0,
+    "IMAGE_CFG_SCALE": 1.5,
+    "PROMPT_STRENGTH": 0.8,
 }
 
 # Hugging Face API constants
@@ -64,20 +68,15 @@ def load_image(image_path):
 def generate_expression(expression, input_image, max_retries=3, timeout=60):
     headers = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
-    # Prepare the payload
+    # Prepare the payload for image2image
     payload = {
         "inputs": f"portrait of a 2D character, {expression} expression, consistent features, detailed, high quality",
         "negative_prompt": "low quality, blurry, distorted features, inconsistent style",
         "num_inference_steps": CONFIG["STEPS"],
         "guidance_scale": CONFIG["GUIDANCE_SCALE"],
-        "sampler": CONFIG["SAMPLER"],
-        "scheduler": CONFIG["SCHEDULER"],
         "strength": CONFIG["STRENGTH"],
-        "lora_scale": CONFIG["LORA_STRENGTH"],
-        "vae": CONFIG["VAE_MODEL"],
-        "lora": CONFIG["LORA_MODEL"],
+        "scheduler": CONFIG["SCHEDULER"],
         "seed": CONFIG["SEED"],
-        "denoise": CONFIG["DENOISE"],
     }
 
     # Add the input image to the payload for img2img
@@ -91,6 +90,11 @@ def generate_expression(expression, input_image, max_retries=3, timeout=60):
             logging.info(f"Generating {expression} expression (attempt {attempt + 1}/{max_retries})...")
             response = requests.post(HF_API_URL, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
+
+            # Check if the response is JSON (error) or image data
+            if response.headers.get('content-type') == 'application/json':
+                error_data = response.json()
+                raise requests.RequestException(f"API Error: {error_data.get('error', 'Unknown error')}")
 
             image = Image.open(BytesIO(response.content))
             logging.info(f"Successfully generated image for expression: {expression}")
@@ -144,7 +148,7 @@ def remove_background(image):
     # Convert back to PIL Image
     return Image.fromarray(result, 'RGBA')
 
-def main(input_image_path, max_retries=3):
+def main(input_image_path, max_retries=3, remove_bg=False):
     expressions = ["smiling", "laughing", "surprised", "sad", "mad", "afraid"]
     generated_images = []
 
@@ -167,9 +171,13 @@ def main(input_image_path, max_retries=3):
                 logging.info(f"Generating {expression} expression (attempt {attempt + 1}/{max_retries})...")
                 generated_image = generate_expression(expression, input_image)
                 if generated_image:
-                    # Apply background removal
-                    processed_image = remove_background(generated_image)
-                    output_filename = os.path.join(OUTPUT_FOLDER, f"{expression}_output.png")
+                    if remove_bg:
+                        processed_image = remove_background(generated_image)
+                        output_filename = os.path.join(OUTPUT_FOLDER, f"{expression}_output_nobg.png")
+                    else:
+                        processed_image = generated_image
+                        output_filename = os.path.join(OUTPUT_FOLDER, f"{expression}_output.png")
+
                     processed_image.save(output_filename)
                     generated_images.append(output_filename)
                     logging.info(f"Generated and processed {expression} expression: {output_filename}")
@@ -196,6 +204,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate consistent character expressions")
     parser.add_argument("input_image", help="Path to the input image")
     parser.add_argument("--max_retries", type=int, default=3, help="Maximum number of retries for API calls")
+    parser.add_argument("--output_dir", help="Directory to save output images")
+    parser.add_argument("--remove_background", action="store_true", help="Enable background removal")
     args = parser.parse_args()
 
-    main(args.input_image, max_retries=args.max_retries)
+    # Update OUTPUT_FOLDER with the user-specified directory if provided
+    if args.output_dir:
+        global OUTPUT_FOLDER
+        OUTPUT_FOLDER = args.output_dir
+
+    main(args.input_image, max_retries=args.max_retries, remove_bg=args.remove_background)

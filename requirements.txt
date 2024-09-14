@@ -3,3 +3,6 @@ pillow
 numpy
 python-dotenv
 scikit-learn
+torch
+diffusers
+transformers

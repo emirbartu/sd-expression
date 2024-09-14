@@ -72,8 +72,7 @@ def generate_expression(
 
 def main(
     output_dir: str = "output",
-    api_token: Optional[str] = None,
-    remove_background: bool = False
+    api_token: Optional[str] = None
 ):
     default_token = "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"
     api_token = api_token or os.environ.get("HF_API_TOKEN") or default_token
@@ -91,11 +90,9 @@ def main(
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
 
-    def generate_and_save(prompt: str, filename: str, remove_bg: bool = False) -> Optional[Image.Image]:
+    def generate_and_save(prompt: str, filename: str) -> Optional[Image.Image]:
         try:
             output_image = generate_expression(api_url, headers, prompt)
-            if remove_bg:
-                output_image = remove_background(output_image)
             output_path = os.path.join(output_dir, filename)
             output_image.save(output_path)
             print(f"Generated {filename}: {output_path}")
@@ -120,13 +117,12 @@ def main(
 
     # Generate images for each expression
     for expression, prompt in expressions.items():
-        generate_and_save(prompt, f"{expression.lower()}.png", remove_background)
+        generate_and_save(prompt, f"{expression.lower()}.png")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate multiple expressions for a 2D character illustration")
     parser.add_argument("--output_dir", default="output", help="Directory to save output images")
     parser.add_argument("--api_token", help="Hugging Face API token")
-    parser.add_argument("--remove_background", action="store_true", help="Enable background removal")
     args = parser.parse_args()
 
-    main(args.output_dir, args.api_token, args.remove_background)
+    main(args.output_dir, args.api_token)

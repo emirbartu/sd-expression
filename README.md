@@ -34,7 +34,7 @@ The AI Consistent Character Expression Generation pipeline takes a 2D character 
    - Create a `.env` file in the project root directory
    - Add your Hugging Face API token to the `.env` file:
      ```
-     HUGGINGFACE_API_TOKEN=your_api_token_here
+     HF_TOKEN = YOUR_API_TOKEN
      ```
 
 ## Usage

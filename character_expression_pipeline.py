@@ -6,7 +6,6 @@ from PIL import Image
 import os
 import sys
 from typing import Optional
-from remove_background import remove_background
 
 def verify_token(api_token: str) -> bool:
     api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"

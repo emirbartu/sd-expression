@@ -10,6 +10,9 @@ import os
 import sys
 import time
 from typing import Optional
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -37,7 +40,7 @@ CONFIG = {
 
 # Hugging Face API constants
 HF_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-HF_API_TOKEN = os.environ.get("HUGGINGFACE_API_TOKEN")
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 def verify_token(api_token: str) -> bool:
     headers = {"Authorization": f"Bearer {api_token}"}
@@ -49,13 +52,13 @@ def verify_token(api_token: str) -> bool:
         logging.error(f"Token verification failed: {str(e)}")
         return False
 
-if not HF_API_TOKEN:
+if not HF_TOKEN:
     logging.error("HUGGINGFACE_API_TOKEN environment variable is not set. Please set it with your API token.")
     sys.exit(1)
 
 # Headers for Hugging Face API requests
 HF_HEADERS = {
-    "Authorization": f"Bearer {HF_API_TOKEN}"
+    "Authorization": f"Bearer {HF_TOKEN}"
 }
 
 def load_image(image_path):
@@ -133,10 +136,9 @@ def main(
     output_dir: str = "output",
     api_token: Optional[str] = None
 ):
-    default_token = "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"
-    api_token = api_token or os.environ.get("HF_API_TOKEN") or default_token
+    api_token = api_token or os.environ.get("HF_TOKEN")
     if not api_token:
-        raise ValueError("API token is required. Provide it as an argument, set the HF_API_TOKEN environment variable, or use the default token.")
+        raise ValueError("API token is required. Provide it as an argument, set the HF_TOKEN environment variable, or use the default token.")
 
     # Verify the token before proceeding
     if not verify_token(api_token):

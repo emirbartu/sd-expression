@@ -1,5 +1,5 @@
-requests==2.31.0
-pillow==10.0.0
-numpy==2.1.1
-python-dotenv==1.0.0
-scikit-learn==1.2.2
+requests
+pillow
+numpy
+python-dotenv
+scikit-learn

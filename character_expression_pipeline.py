@@ -6,6 +6,7 @@ from PIL import Image
 import os
 import sys
 from typing import Optional
+from rembg import remove
 
 def verify_token(api_token: str) -> bool:
     api_url = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
@@ -107,6 +108,9 @@ def main(
         except Exception as e:
             print(f"Unexpected error generating {filename}: {str(e)}")
         return None
+
+    def remove_background(image: Image.Image) -> Image.Image:
+        return remove(image)
 
     # Define expressions and their corresponding prompts
     expressions = {

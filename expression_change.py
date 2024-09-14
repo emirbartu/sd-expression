@@ -7,6 +7,9 @@ from PIL import Image
 import io
 from diffusers import StableDiffusionImg2ImgPipeline
 import torch
+from transformers import CLIPTokenizer
+from huggingface_hub import hf_hub_download
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -17,6 +20,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Hugging Face API constants
 HF_API_URL = "https://api-inference.huggingface.co/models/CompVis/stable-diffusion-v1-4"
 HF_TOKEN = os.environ.get("HF_TOKEN")
+
+# Global variable to store the pipeline
+pipeline_cache = None
 
 def verify_token(api_token: str) -> bool:
     headers = {"Authorization": f"Bearer {api_token}"}
@@ -40,25 +46,52 @@ def resize_image(image: Image.Image, max_size: int = 512) -> Image.Image:
             height = max_size
     return image.resize((width, height), Image.LANCZOS)
 
-def change_expression_image2image(image: Image.Image, api_token: str, emotion: str) -> Image.Image:
-    pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-        "CompVis/stable-diffusion-v1-4",
-        torch_dtype=torch.float32,
-        use_auth_token=api_token
-    )
-    pipeline = pipeline.to("cpu")
-    pipeline.enable_attention_slicing()
+def load_pipeline(api_token: str) -> StableDiffusionImg2ImgPipeline:
+    global pipeline_cache
+    if pipeline_cache is not None:
+        logging.info("Using cached pipeline")
+        return pipeline_cache
 
-    prompt = f"a character with a {emotion} expression"
-    output = pipeline(
-        prompt=prompt,
-        image=image,
-        strength=0.6,
-        guidance_scale=7.0,
-        num_inference_steps=20
-    ).images[0]
+    try:
+        logging.info("Loading pipeline...")
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                "CompVis/stable-diffusion-v1-4",
+                use_auth_token=api_token,
+                cache_dir=tmp_dir,
+                torch_dtype=torch.float32
+            )
 
-    return output
+        logging.info("Optimizing pipeline for CPU processing")
+        pipeline = pipeline.to("cpu")
+        pipeline.enable_attention_slicing(slice_size="max")
+
+        pipeline_cache = pipeline
+        logging.info("Pipeline loaded and cached successfully")
+        return pipeline
+    except Exception as e:
+        logging.error(f"Error loading pipeline: {str(e)}")
+        raise
+
+def change_expression_image2image(image: Image.Image, pipeline: StableDiffusionImg2ImgPipeline, emotion: str) -> Image.Image:
+    prompt = f"a character with a {emotion} expression, highly detailed, realistic"
+    negative_prompt = "blurry, low quality, distorted"
+    try:
+        logging.info(f"Generating image with prompt: {prompt}")
+        output = pipeline(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            image=image,
+            strength=0.6,
+            guidance_scale=7.0,
+            num_inference_steps=20,
+            num_images_per_prompt=1
+        ).images[0]
+        logging.info("Image generation successful")
+        return output
+    except Exception as e:
+        logging.error(f"Error in image2image processing: {str(e)}")
+        raise
 
 def main(input_image_path: str, output_path: str, emotion: str, api_token: Optional[str] = None):
     api_token = api_token or HF_TOKEN
@@ -69,19 +102,34 @@ def main(input_image_path: str, output_path: str, emotion: str, api_token: Optio
         logging.error("Token verification failed. Exiting.")
         return
 
-    # Load and resize the input image
-    input_image = Image.open(input_image_path)
-    resized_image = resize_image(input_image)
-    logging.info(f"Resized input image to {resized_image.size}")
+    try:
+        # Load and resize the input image
+        input_image = Image.open(input_image_path)
+        resized_image = resize_image(input_image)
+        logging.info(f"Resized input image to {resized_image.size}")
 
-    # Generate the image with the specified expression using image2image
-    output_image = change_expression_image2image(resized_image, api_token, emotion)
-    output_image.save(output_path)
-    logging.info(f"Generated {emotion} expression image: {output_path}")
+        # Load the pipeline
+        pipeline = load_pipeline(api_token)
+
+        # Generate the image with the specified expression using image2image
+        output_image = change_expression_image2image(resized_image, pipeline, emotion)
+        output_image.save(output_path)
+        logging.info(f"Generated {emotion} expression image: {output_path}")
+    except MemoryError:
+        logging.warning("Memory error. Trying with a smaller image size.")
+        try:
+            smaller_image = resize_image(input_image, max_size=256)
+            output_image = change_expression_image2image(smaller_image, pipeline, emotion)
+            output_image.save(output_path)
+            logging.info(f"Generated {emotion} expression image with reduced size: {output_path}")
+        except Exception as e:
+            logging.error(f"Failed to generate image even with reduced size: {str(e)}")
+    except Exception as e:
+        logging.error(f"An error occurred: {str(e)}")
 
 if __name__ == "__main__":
     import argparse
-    parser = argparse.ArgumentParser(description="Change expression of an input image using Stable Diffusion")
+    parser = argparse.ArgumentParser(description="Change expression of an input image using Stable Diffusion XL")
     parser.add_argument("input_image", help="Path to the input image")
     parser.add_argument("output_path", help="Path to save the output image")
     parser.add_argument("emotion", help="Desired emotion for the output image")
